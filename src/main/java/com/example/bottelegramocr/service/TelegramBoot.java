@@ -10,10 +10,7 @@ import org.springframework.stereotype.Service;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
-import org.telegram.telegrambots.meta.api.objects.File;
-import org.telegram.telegrambots.meta.api.objects.InputFile;
-import org.telegram.telegrambots.meta.api.objects.PhotoSize;
-import org.telegram.telegrambots.meta.api.objects.Update;
+import org.telegram.telegrambots.meta.api.objects.*;
 import org.telegram.telegrambots.meta.exceptions.TelegramApiException;
 
 import javax.imageio.ImageIO;
@@ -27,10 +24,7 @@ import java.util.List;
 @Service
 public class TelegramBoot extends TelegramLongPollingBot {
     private final static Logger LOGGER = LoggerFactory.getLogger(TelegramBoot.class);
-
-    @Autowired
-    private Tesseract tesseract;
-
+    private final Tesseract tesseract;
 
     @Value("${botToken}")
     private String botToken;
@@ -38,7 +32,9 @@ public class TelegramBoot extends TelegramLongPollingBot {
     @Value("${botName}")
     private String botName;
 
-    public TelegramBoot() {
+    @Autowired
+    public TelegramBoot(Tesseract tesseract) {
+        this.tesseract = tesseract;
     }
 
     @Override
@@ -53,66 +49,59 @@ public class TelegramBoot extends TelegramLongPollingBot {
 
     @Override
     public void onUpdateReceived(Update update) {
-        // Get the message from the user
-        final String messageTextReceived = update.getMessage().getText();
-        String txt = "";
-        LOGGER.info("Message received " + messageTextReceived);
-
-        // Get user id
-        final long chatId = update.getMessage().getChatId();
-
-        if (update.getMessage().hasPhoto()) {
-            // Get image from message
-            List<PhotoSize> photos = update.getMessage().getPhoto();
-
-            PhotoSize image = photos.stream()
-                    .sorted(Comparator.comparing(PhotoSize::getFileSize).reversed())
-                    .findFirst()
-                    .orElse(null);
-            LOGGER.info(image.getFileId());
-
-            if (image != null) {
-                GetFile getFile = new GetFile(image.getFileId());
-
-                try {
-                    File file = execute(getFile);
-                    InputFile inputFile = new InputFile(file.getFileUrl(getBotToken()));
-
-                    InputStream inputStream = new URL(file.getFileUrl(getBotToken())).openStream();
-
-                    BufferedImage imagef = ImageIO.read(inputStream);
-
-                    String text = tesseract.doOCR(imagef);
-                    txt = text;
-                    LOGGER.info(text);
-
-                    SendMessage messageimg = new SendMessage();
-                    messageimg.setChatId(chatId);
-                    messageimg.setText(text);
-
-
-
-                } catch (TelegramApiException e) {
-                    throw new RuntimeException(e);
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                } catch (TesseractException e) {
-                    e.printStackTrace();
-                }
-            }
+        if (update.hasMessage()) {
+            handleMessage(update.getMessage());
         }
+    }
 
+    private void handleMessage(Message message) {
+        if (message.hasPhoto()) {
+            String textImg = getTextFromPhoto(message.getPhoto());
+            sendMessage(textImg, message.getChatId());
+        }
+    }
 
-        // Create message object
-        SendMessage message = new SendMessage();
-        message.setChatId(chatId);
-        message.setText(txt);
+    private void sendMessage(String textImg, Long chatId) {
+        SendMessage sendMessage = new SendMessage();
+        sendMessage.setChatId(chatId);
+        sendMessage.setText(textImg);
 
         try {
-            // Send message
-            execute(message);
+            execute(sendMessage);
         } catch (TelegramApiException e) {
             e.printStackTrace();
         }
+    }
+
+    private String getTextFromPhoto(List<PhotoSize> photos) {
+        String txt = "";
+        PhotoSize image = photos.stream()
+                .sorted(Comparator.comparing(PhotoSize::getFileSize).reversed())
+                .findFirst()
+                .orElse(null);
+
+        if (image != null) {
+            GetFile getFile = new GetFile(image.getFileId());
+
+            try {
+                File file = execute(getFile);
+                InputFile inputFile = new InputFile(file.getFileUrl(getBotToken()));
+
+                InputStream inputStream = new URL(file.getFileUrl(getBotToken())).openStream();
+
+                BufferedImage imagef = ImageIO.read(inputStream);
+
+                String text = tesseract.doOCR(imagef);
+                txt = text;
+                LOGGER.info(text);
+
+
+            } catch (TelegramApiException | IOException e) {
+                throw new RuntimeException(e);
+            } catch (TesseractException e) {
+                e.printStackTrace();
+            }
+        }
+        return txt;
     }
 }
